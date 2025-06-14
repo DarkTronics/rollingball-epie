@@ -8,7 +8,9 @@ import scipy.fft
 from scipy.fft import ifft2, fft2, ifftshift, fftshift
 import torch
 import os
+from PIL import Image
 scipy.fft.set_global_backend(cufft)
+import time
 
 os.makedirs('images', exist_ok=True)
 os.makedirs('pt', exist_ok=True)
@@ -109,12 +111,20 @@ for ry in range(3):  # vertical steps (rows)
         plt.close(fig)
 
         # --- Save PNGs ---
-        amp_crop = Assumption1[2150:2450, 3150:3450]
-        phase_crop = cp.angle(amp_crop)
+        amp_crop = abs(Assumption1[2150:2450, 3150:3450]).get()
+        phase_crop = cp.angle(Assumption1[2150:2450, 3150:3450]).get()
 
-        plt.imsave(f'images/absolute_{rx}{ry}.png', abs(amp_crop.get()), cmap='gray')
-        plt.imsave(f'images/phase_{rx}{ry}.png', phase_crop.get(), cmap='gray')
+
+        plt.imsave(f'images/absolute_{rx}{ry}.png', amp_crop, cmap='gray')
+        plt.imsave(f'images/phase_{rx}{ry}.png', phase_crop, cmap='gray')
         plt.imsave(f'images/probe_{rx}{ry}.png', abs(Afield.get()), cmap='gray')
+
+        amp_crop = Image.open(f'images/absolute_{rx}{ry}.png').convert('L')
+        amp_crop = np.array(amp_crop).astype(np.float32) / 255.0  # Normalize to [0, 1]
+        phase_crop = Image.open(f'images/phase_{rx}{ry}.png').convert('L')
+        phase_crop = np.array(phase_crop).astype(np.float32) / 255.0  # Normalize to [0, 1]
+
+        label_tensor = torch.tensor(np.stack((amp_crop, phase_crop), axis=0), dtype=torch.float32)  # shape: [2, 300, 300]
 
         # --- Save .pt file ---
         input_images = []
@@ -122,19 +132,16 @@ for ry in range(3):  # vertical steps (rows)
             for m in range(stepnumber):
                 filename = str((n + ry) * 10 + m + 1 + rx) + ".PNG"
                 print(f"Reading diffraction pattern: {filename}")
-                diffraction_image = plt.imread(filename)
-                I = 255 * diffraction_image[1031 - 800:1031 + 800, 1065 - 800:1065 + 800]
-                I = cp.array(I)
-                input_images.append(torch.tensor(I.get(), dtype=torch.float32))  # save raw diffraction pattern
+                diffraction_image = Image.open(filename).convert('L')
+                img_array = np.array(diffraction_image).astype(np.float32) / 255.0  # Normalize to [0, 1]
+                input_images.append(torch.tensor(img_array, dtype=torch.float32))  # save raw diffraction pattern
 
-        input_tensor = torch.stack(input_images)  # shape: [25, H, W]
-
-        amp = abs(amp_crop.get())
-        phase = cp.angle(amp_crop).get()
-        label_tensor = torch.stack([
-            torch.tensor(amp, dtype=torch.float32),
-            torch.tensor(phase, dtype=torch.float32)
-        ])  # shape: [2, 300, 300]
+                
+        input_tensor = torch.tensor(np.stack(input_images, axis=0), dtype=torch.float32)  # shape: [25, h, w]
 
         torch.save({'input': input_tensor, 'label': label_tensor}, f'pt/data_{count}.pt')
         count += 1
+
+total_end_time = time.time()
+total_duration = total_end_time - start_time
+print(f"\nTotal execution time: {total_duration:.2f} seconds")
